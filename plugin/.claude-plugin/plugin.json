@@ -1,0 +1,52 @@
+{
+  "name": "automode",
+  "version": "0.2.0",
+  "description": "Third-party auto mode for Claude Code: a classifier model reviews tool calls that would prompt, and allows, denies, or leaves them to you.",
+  "author": {
+    "name": "zcl0621"
+  },
+  "homepage": "https://github.com/zcl0621/claude-automode",
+  "userConfig": {
+    "provider": {
+      "type": "string",
+      "title": "Classifier API format",
+      "description": "openai = /chat/completions (DeepSeek, Qwen, OpenRouter, vLLM...), anthropic = /v1/messages",
+      "options": [
+        "openai",
+        "anthropic"
+      ],
+      "default": "openai"
+    },
+    "base_url": {
+      "type": "string",
+      "title": "Classifier base URL",
+      "description": "e.g. https://api.deepseek.com",
+      "default": ""
+    },
+    "api_key": {
+      "type": "string",
+      "title": "Classifier API key",
+      "description": "Stored in secure storage. Leave empty to use AUTOMODE_API_KEY or ~/.claude-automode/config.json",
+      "sensitive": true,
+      "default": ""
+    },
+    "slow_model": {
+      "type": "string",
+      "title": "Classifier model (stage 2, required)",
+      "description": "Model that gives the allow / deny / ask verdict, e.g. deepseek-flash",
+      "default": ""
+    },
+    "fast_model": {
+      "type": "string",
+      "title": "Fast filter model (stage 1, optional)",
+      "description": "Cheap model that waves through obviously low-risk calls. Empty = skip stage 1",
+      "default": ""
+    },
+    "disable_thinking": {
+      "type": "boolean",
+      "title": "Send thinking: disabled",
+      "description": "For models that think by default (e.g. DeepSeek): adds {\"thinking\":{\"type\":\"disabled\"}} to every request",
+      "default": false
+    }
+  }
+}

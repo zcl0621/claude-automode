@@ -1,0 +1,14 @@
+{
+  "name": "claude-automode",
+  "description": "Third-party auto mode for Claude Code with any OpenAI- or Anthropic-compatible classifier model.",
+  "owner": {
+    "name": "zcl0621"
+  },
+  "plugins": [
+    {
+      "name": "automode",
+      "source": "./plugin",
+      "description": "Third-party auto mode for Claude Code: a classifier model reviews tool calls that would prompt, and allows, denies, or leaves them to you."
+    }
+  ]
+}
