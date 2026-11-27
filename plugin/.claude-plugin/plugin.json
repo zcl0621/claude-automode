@@ -6,6 +6,7 @@
     "name": "zcl0621"
   },
   "homepage": "https://github.com/zcl0621/claude-automode",
+  "license": "MIT",
   "userConfig": {
     "provider": {
       "type": "string",
