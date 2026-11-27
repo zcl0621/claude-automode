@@ -1,4 +1,4 @@
-"""Replay real local Claude Code sessions through automode (rules + scanner + classifier).
+"""Replay real local Claude Code sessions through automode (rules + classifier).
 
 The user agreed to send a SAMPLE of their history to the configured classifier API.
 Before anything leaves the machine, credential-looking strings are replaced with <REDACTED_SECRET>.
@@ -7,9 +7,7 @@ Ground truth: these calls actually ran in the user's sessions, so almost all wer
 A deny/ask on one is, to first order, a false block; flagged calls are written out for review.
 
 For each sampled call the classifier sees what the hook would have seen at that moment:
-the user's messages so far, the agent's earlier tool calls, and injection-scanner findings over
-the last few tool outputs before the call (the real hook scans every output; this scans the last
-SCAN_LAST to keep the cost bounded).
+the user's messages so far and the agent's earlier tool calls.
 
 Usage: python3 eval/replay_sessions.py --n 2000 --out eval/results/replay_v6.jsonl [--workers 8]
 """
@@ -27,9 +25,8 @@ from concurrent.futures import ThreadPoolExecutor
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(HERE), "plugin", "scripts"))
 
-from automode import classifier, config, context, rules, scanner  # noqa: E402
+from automode import classifier, config, context, rules  # noqa: E402
 
-SCAN_LAST = 3
 EXCLUDE_DIR = re.compile(r"claude-auomode|scratch-workspaces|scratch-2026")
 EXCLUDE_TOOL = re.compile(r"^mcp__ccd_")  # the desktop app's own UI tools never prompt
 REDACT = re.compile(rules.SECRETISH.pattern + r"[^\s\"'`,;}]*", re.I)
@@ -77,8 +74,8 @@ def index_calls(files):
 
 
 def context_at(fp, stop_line, stop_block, limit_users=12):
-    """User messages, earlier tool calls and recent tool outputs before (stop_line, stop_block)."""
-    users, prior, outputs = [], [], []
+    """User messages, earlier tool calls and the agent's proposal before (stop_line, stop_block)."""
+    users, prior = [], []
     last_agent_text, proposal = "", ""
     with open(fp, errors="ignore") as f:
         for ln, line in enumerate(f):
@@ -106,11 +103,6 @@ def context_at(fp, stop_line, stop_block, limit_users=12):
                             t = b.get("text", "").strip()
                             if t and not context._is_harness_text(t):
                                 users.append(t[:context.MAX_MSG_CHARS])
-                        elif b.get("type") == "tool_result":
-                            c = b.get("content")
-                            if isinstance(c, list):
-                                c = "\n".join(x.get("text", "") for x in c if isinstance(x, dict))
-                            outputs.append(str(c or ""))
             elif e.get("type") == "assistant" and isinstance(content, list):
                 texts = [b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"]
                 if any(t.strip() for t in texts):
@@ -122,22 +114,15 @@ def context_at(fp, stop_line, stop_block, limit_users=12):
                         prior.append(context.summarize_call(b.get("name", ""), b.get("input") or {}))
     if len(proposal) > context.MAX_PROPOSAL_CHARS:
         proposal = "…" + proposal[-context.MAX_PROPOSAL_CHARS:]
-    return users[-limit_users:], prior[-8:], outputs[-SCAN_LAST:], proposal
+    return users[-limit_users:], prior[-8:], proposal
 
 
 def judge(cfg, item):
     fp, ln, bi, name, tin = item
     tin = tin if isinstance(tin, dict) else {"value": tin}
-    users, prior, outputs, proposal = context_at(fp, ln, bi)
-    injected, scan_err = [], 0
-    for out in outputs:
-        try:
-            injected += scanner.scan(cfg, "tool", redact(out))
-        except classifier.ClassifierError:
-            scan_err += 1
+    users, prior, proposal = context_at(fp, ln, bi)
     prompt = classifier.build_prompt([redact(u) for u in users], redact(context.render_action(name, tin)), [],
-                                     rules.command_facts(name, tin), [redact(p) for p in prior], injected,
-                                     redact(proposal))
+                                     rules.command_facts(name, tin), [redact(p) for p in prior], redact(proposal))
     try:
         d, why, stage = classifier.classify(cfg, prompt)
     except classifier.ClassifierError as e:
@@ -145,7 +130,7 @@ def judge(cfg, item):
     return {"project": os.path.basename(os.path.dirname(fp)), "session": os.path.basename(fp),
             "tool": name, "kind": "Bash" if name == "Bash" else "MCP",
             "action": redact(context.summarize_call(name, tin))[:400], "last_user": redact(users[-1])[:300] if users else "",
-            "decision": d, "stage": stage, "reason": why, "injected": injected, "scan_errors": scan_err}
+            "decision": d, "stage": stage, "reason": why}
 
 
 def main():
@@ -185,16 +170,13 @@ def main():
         for r in res:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
 
-    print("elapsed=%.1fs models: fast=%s slow=%s errors=%d scan_errors=%d" % (
-        time.time() - t0, cfg.fast_model, cfg.slow_model, sum(r["stage"] == "error" for r in res),
-        sum(r["scan_errors"] for r in res)))
+    print("elapsed=%.1fs model: %s errors=%d" % (time.time() - t0, cfg.slow_model, sum(r["stage"] == "error" for r in res)))
     for kind in ("Bash", "MCP"):
         rs = [r for r in res if r["kind"] == kind]
         c = collections.Counter(r["decision"] for r in rs)
         print("  %-4s n=%4d allow %4d  deny %3d (%.1f%%)  ask %3d (%.1f%%)" % (
             kind, len(rs), c["allow"], c["deny"], 100.0 * c["deny"] / max(1, len(rs)),
             c["ask"], 100.0 * c["ask"] / max(1, len(rs))))
-    print("  scanner found something before %d of %d sampled calls" % (sum(bool(r["injected"]) for r in res), len(res)))
     print("per-call results:", args.out)
 
 

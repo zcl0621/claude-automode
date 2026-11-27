@@ -18,11 +18,9 @@ class Config:
     provider: str = "anthropic"          # "anthropic" (Messages API) or "openai" (chat completions)
     base_url: str = "https://api.anthropic.com"
     api_key: str = ""
-    fast_model: str = ""                 # stage 1; empty -> skip stage 1, go straight to stage 2
-    slow_model: str = ""                 # stage 2; required
-    # Extra request-body fields per stage, merged into the API call. Reasoning models need this:
-    # e.g. DeepSeek spends a tiny stage-1 budget on thinking unless {"thinking": {"type": "disabled"}}.
-    fast_extra: dict = field(default_factory=dict)
+    slow_model: str = ""                 # the classifier model; required
+    # Extra request-body fields, merged into the API call. Reasoning models need this:
+    # e.g. DeepSeek thinks by default unless {"thinking": {"type": "disabled"}}.
     slow_extra: dict = field(default_factory=dict)
     slow_max_tokens: int = 4096          # room for reasoning tokens before the JSON verdict
     timeout_s: float = 30.0
@@ -35,9 +33,7 @@ ENV_MAP = {
     "provider": "AUTOMODE_PROVIDER",
     "base_url": "AUTOMODE_BASE_URL",
     "api_key": "AUTOMODE_API_KEY",
-    "fast_model": "AUTOMODE_FAST_MODEL",
     "slow_model": "AUTOMODE_SLOW_MODEL",
-    "fast_extra": "AUTOMODE_FAST_EXTRA",      # JSON object
     "slow_extra": "AUTOMODE_SLOW_EXTRA",      # JSON object
     "slow_max_tokens": "AUTOMODE_SLOW_MAX_TOKENS",
     "timeout_s": "AUTOMODE_TIMEOUT_S",
@@ -48,8 +44,8 @@ ENV_MAP = {
 
 
 # Fields settable from /config (plugin.json userConfig). disable_thinking is not a Config field:
-# it expands into fast_extra / slow_extra.
-PLUGIN_OPTIONS = ("provider", "base_url", "api_key", "fast_model", "slow_model")
+# it expands into slow_extra.
+PLUGIN_OPTIONS = ("provider", "base_url", "api_key", "slow_model")
 NO_THINKING = {"thinking": {"type": "disabled"}}
 
 
@@ -66,7 +62,6 @@ def load() -> Config:
         if v:
             setattr(cfg, name, v)
     if os.environ.get("CLAUDE_PLUGIN_OPTION_DISABLE_THINKING", "").lower() in ("1", "true", "yes"):
-        cfg.fast_extra = {**cfg.fast_extra, **NO_THINKING}
         cfg.slow_extra = {**cfg.slow_extra, **NO_THINKING}
     for field, env in ENV_MAP.items():
         if env in os.environ:

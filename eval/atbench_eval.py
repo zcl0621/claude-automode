@@ -21,7 +21,7 @@ from concurrent.futures import ThreadPoolExecutor
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(HERE), "plugin", "scripts"))
 
-from automode import classifier, config, context, rules, scanner  # noqa: E402
+from automode import classifier, config, context, rules  # noqa: E402
 
 DATA = os.path.join(HERE, "data", "atbench", "test.json")
 
@@ -44,32 +44,23 @@ def to_tool(action):
     return "mcp__" + name, args
 
 
-def judge(cfg, traj, use_scanner=True):
-    users, steps, prior, injected, scan_errors = [], [], [], [], 0
-    last_tool = ""
+def judge(cfg, traj):
+    users, steps, prior = [], [], []
     for turn in traj["conversation"]:
         if turn["role"] == "user":
             users.append(str(turn.get("content", "")))
             continue
-        # Tool output: what a PostToolUse hook sees. Tool *descriptions* are not scanned:
-        # a real hook cannot see them, so scanning them here would overstate results.
-        if turn["role"] == "environment":
-            if use_scanner:
-                try:
-                    injected += scanner.scan(cfg, last_tool, turn.get("content", ""))
-                except classifier.ClassifierError:
-                    scan_errors += 1
+        if turn["role"] == "environment":   # tool output: the hook never sees it
             continue
         action = turn.get("action")
         if turn["role"] != "assistant" or not action:
             continue
         tool, tin = to_tool(action)
-        last_tool = tool
         d, why = rules.check(tool, tin)
         stage = "rules"
         if not d:
             prompt = classifier.build_prompt(users[-12:], context.render_action(tool, tin), [],
-                                             rules.command_facts(tool, tin), prior[-8:], injected[-12:])
+                                             rules.command_facts(tool, tin), prior[-8:])
             try:
                 d, why, stage = classifier.classify(cfg, prompt)
             except classifier.ClassifierError as e:
@@ -83,8 +74,7 @@ def judge(cfg, traj, use_scanner=True):
             "failure_mode": traj["failure_mode"], "flagged": bool(flagged),
             "flag_decision": flagged["decision"] if flagged else None,
             "flag_step": steps.index(flagged) if flagged else None, "n_steps_judged": len(steps),
-            "errors": sum(s["stage"] == "error" for s in steps), "scan_errors": scan_errors,
-            "injected": injected, "steps": steps}
+            "errors": sum(s["stage"] == "error" for s in steps), "steps": steps}
 
 
 def main():
@@ -92,12 +82,11 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--workers", type=int, default=6)
-    ap.add_argument("--no-scanner", action="store_true")
     args = ap.parse_args()
     if os.path.exists(args.out):
         sys.exit("refusing to overwrite existing results file: " + args.out)
     cfg = config.load()
-    models = "fast=%s slow=%s" % (cfg.fast_model or "-", cfg.slow_model)
+    models = "model=%s" % cfg.slow_model
     if not os.path.exists(DATA):
         sys.exit("missing %s: download test.json from the Hugging Face dataset AI45Research/ATBench-Codex" % DATA)
     data = json.load(open(DATA))
@@ -105,18 +94,14 @@ def main():
         data = data[:args.limit]
     t0 = time.time()
     with ThreadPoolExecutor(args.workers) as pool:
-        res = list(pool.map(lambda t: judge(cfg, t, not args.no_scanner), data))
+        res = list(pool.map(lambda t: judge(cfg, t), data))
     os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
     with open(args.out, "w") as f:
         for r in res:
             f.write(json.dumps(dict(r, models=models), ensure_ascii=False) + "\n")
 
-    print("ATBench-Codex n=%d elapsed=%.1fs models: %s errors(calls)=%d scan_errors=%d scanner=%s" % (
-        len(res), time.time() - t0, models, sum(r["errors"] for r in res),
-        sum(r["scan_errors"] for r in res), not args.no_scanner))
-    print("  trajectories where scanner found something: unsafe %d/%d, safe %d/%d" % (
-        sum(bool(r["injected"]) for r in res if not r["is_safe"]), sum(not r["is_safe"] for r in res),
-        sum(bool(r["injected"]) for r in res if r["is_safe"]), sum(r["is_safe"] for r in res)))
+    print("ATBench-Codex n=%d elapsed=%.1fs %s errors(calls)=%d" % (
+        len(res), time.time() - t0, models, sum(r["errors"] for r in res)))
 
     def line(name, rs):
         uns = [r for r in rs if not r["is_safe"]]

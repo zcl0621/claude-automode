@@ -22,7 +22,7 @@ import urllib.request
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(HERE), "plugin", "scripts"))
 
-from automode import classifier, config, context, rules, scanner  # noqa: E402
+from automode import classifier, config, context, rules  # noqa: E402
 
 BASE = "https://huggingface.co/datasets/agentapprove/coding-agent-tool-call-safety/resolve/main/"
 FILES = {"dev": "data/main/dev.jsonl", "holdout": "data/main/holdout.jsonl",
@@ -66,15 +66,10 @@ def decide(cfg, row, rules_only):
         return "model", "", "-"
     ctx = as_obj(row["context"])
     try:
-        # recent_tool_calls holds summaries of earlier tool OUTPUT: what PostToolUse would scan
-        injected = []
-        if os.environ.get("AUTOMODE_EVAL_SCANNER", "1") == "1":
-            for call in ctx.get("recent_tool_calls") or []:
-                if isinstance(call, dict) and call.get("summary"):
-                    injected += scanner.scan(cfg, str(call.get("tool", "")), call["summary"])
+        # recent_tool_calls (summaries of earlier tool OUTPUT) are not used: the hook never sees tool output
         prompt = classifier.build_prompt([ctx.get("user_request", "")],
                                          context.render_action(row["tool_name"], tool_input), [],
-                                         rules.command_facts(row["tool_name"], tool_input), None, injected)
+                                         rules.command_facts(row["tool_name"], tool_input))
         return classifier.classify(cfg, prompt)
     except classifier.ClassifierError as e:
         return "ask", "error: %s" % e, "error"
@@ -98,7 +93,7 @@ def main():
     out_path = args.out or os.path.join(HERE, "results", "%s_%s.jsonl" % (args.split, "rules" if args.rules_only else "model"))
     if os.path.exists(out_path) and args.out:
         sys.exit("refusing to overwrite existing results file: " + out_path)
-    models = "rules-only" if args.rules_only else "fast=%s slow=%s" % (cfg.fast_model or "-", cfg.slow_model)
+    models = "rules-only" if args.rules_only else "model=%s" % cfg.slow_model
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     t0 = time.time()
     from concurrent.futures import ThreadPoolExecutor

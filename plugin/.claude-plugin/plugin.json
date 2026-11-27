@@ -33,14 +33,8 @@
     },
     "slow_model": {
       "type": "string",
-      "title": "Classifier model (stage 2, required)",
+      "title": "Classifier model (required)",
       "description": "Model that gives the allow / deny / ask verdict, e.g. deepseek-flash",
-      "default": ""
-    },
-    "fast_model": {
-      "type": "string",
-      "title": "Fast filter model (stage 1, optional)",
-      "description": "Cheap model that waves through obviously low-risk calls. Empty = skip stage 1",
       "default": ""
     },
     "disable_thinking": {
